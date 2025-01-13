@@ -4,7 +4,6 @@ from torch.nn import functional as F
 import argparse
 import os
 
-
 # hyperparameters
 batch_size = 64 # how many independent sequences will we process in parallel?
 block_size = 256 # what is the maximum context length for predictions?
@@ -196,7 +195,7 @@ def train(model, train_data, val_data, max_iters):
     return model
 
 
-def load_dataset(path):
+def load_shakespeare_dataset(path):
     # wget https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
     with open(path, 'r', encoding='utf-8') as f:
         text = f.read()
@@ -237,7 +236,7 @@ def main():
     else:
         print("CUDA is not available.")
 
-    train_data, val_data, vocab_size, decode = load_dataset('input.txt')
+    train_data, val_data, vocab_size, decode = load_shakespeare_dataset('input.txt')
 
     model = TinyGPTModel(vocab_size)
 
