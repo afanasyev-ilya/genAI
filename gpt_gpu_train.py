@@ -8,7 +8,7 @@ import os
 # hyperparameters
 batch_size = 64 # how many independent sequences will we process in parallel?
 block_size = 256 # what is the maximum context length for predictions?
-default_max_iters = 5000
+default_max_iters = 1000
 eval_interval = 300
 learning_rate = 3e-4
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -225,7 +225,7 @@ def main():
     parser = argparse.ArgumentParser(description="TinyGPT Model: Train or Load")
     parser.add_argument('--load', type=str, help="Path to a saved model to load. If omitted, a new TinyGPT model will be created.")
     parser.add_argument('--train', action='store_true', help="Train the model.")
-    parser.add_argument('--train_iters', type=int, default=default_max_iters, help="Number of training iterations (default: 5000).")
+    parser.add_argument('--iters', type=int, default=default_max_iters, help="Number of training iterations (default: 5000).")
     args = parser.parse_args()
 
     print("Using ", device)
@@ -258,9 +258,9 @@ def main():
 
     # Check if training is requested
     if args.train:
-        print("Training the model...")
+        print("Training the model for", str(args.iters), " iters...")
         model.train()
-        model = train(model, train_data, val_data, args.train_iters)
+        model = train(model, train_data, val_data, args.iters)
         model_path = args.load if args.load else "tinygpt_model.pt"
         torch.save(model.state_dict(), model_path)
         print(f"Model saved to {model_path}")
