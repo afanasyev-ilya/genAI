@@ -223,7 +223,7 @@ def load_dataset(path):
 def main():
     # Argument parsing
     parser = argparse.ArgumentParser(description="TinyGPT Model: Train or Load")
-    parser.add_argument('--load', type=str, default="tiny_gpt_model.pt", help="Path to a saved model to load (default: tiny_gpt_model.pt).")
+    parser.add_argument('--load', type=str, help="Path to a saved model to load. If omitted, a new TinyGPT model will be created.")
     parser.add_argument('--train', action='store_true', help="Train the model.")
     args = parser.parse_args()
 
