@@ -16,6 +16,15 @@ n_heads = 6
 dropout = 0.2
 # ------------
 
+print("Using ", device)
+if torch.cuda.is_available():
+    print("CUDA is available!")
+    print(f"Device count: {torch.cuda.device_count()}")
+    print(f"Current device: {torch.cuda.current_device()}")
+    print(f"Device name: {torch.cuda.get_device_name(torch.cuda.current_device())}")
+else:
+    print("CUDA is not available.")
+
 torch.manual_seed(1337)
 
 # wget https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
