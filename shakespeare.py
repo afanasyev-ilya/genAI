@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import argparse
 import os
+import time
 
 
 default_max_iters = 1000
@@ -88,7 +89,7 @@ def load_shakespeare_dataset(path):
     train_data = data[:n]
     val_data = data[n:]
 
-    return train_data, val_data, vocab_size, decode
+    return train_data, val_data, vocab_size, decode, encode
 
 
 def main():
@@ -108,7 +109,7 @@ def main():
     else:
         print("CUDA is not available.")
 
-    train_data, val_data, vocab_size, decode = load_shakespeare_dataset('input.txt')
+    train_data, val_data, vocab_size, decode, encode = load_shakespeare_dataset('input.txt')
 
     model = TinyGPTModel(vocab_size)
 
@@ -142,8 +143,22 @@ def main():
 
     # generate from the model
     model.eval()
-    context = torch.zeros((1, 1), dtype=torch.long, device=device)
-    print(decode(model.generate(context, max_new_tokens=500)[0].tolist()))
+
+    user_prompt = encode("This is new variation of poem, he said")
+    user_context = torch.LongTensor(user_prompt).to(device)
+    user_context = torch.unsqueeze(user_context, 0)
+
+    empty_context = torch.zeros((1, 1), dtype=torch.long, device=device)
+
+    print("user prompt size: ", user_context.size())
+
+    start_time = time.time()
+    # Only measure the generation step; do not include decode()
+    tokens = model.generate(user_context, max_new_tokens=500)[0].tolist()
+    end_time = time.time()
+
+    print(decode(tokens))
+    print(f"Generation took {end_time - start_time:.4f} seconds")
 
 
 main()
