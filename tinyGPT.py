@@ -105,6 +105,12 @@ class Head(nn.Module):
             self.cache_k = torch.cat([self.cache_k, k_new], dim=1)  # (B, T_cached+1, head_size)
             self.cache_v = torch.cat([self.cache_v, v_new], dim=1)  # (B, T_cached+1, head_size)
 
+            # TODO check this?
+            # If the cache length is greater than or equal to block_size, remove the first token.
+            if self.cache_k.shape[1] > block_size:
+                self.cache_k = self.cache_k[:, 1:, :]  # Remove the token at T=0
+                self.cache_v = self.cache_v[:, 1:, :]
+
         # Use the cached keys and values for computing attention.
         # q: (B, 1, head_size); k: (B, T_total, head_size); v: (B, T_total, head_size)
         k = self.cache_k
