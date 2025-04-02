@@ -99,6 +99,7 @@ def main():
     parser.add_argument('--train', action='store_true', help="Train the model.")
     parser.add_argument('--iters', type=int, default=default_max_iters, help="Number of training iterations (default: 5000).")
     parser.add_argument('--kv', action='store_true', help="Use kv-cache.")
+    parser.add_argument('--tokens', type=int, default=200, help="How much output tokens to generate, default 200.")
     args = parser.parse_args()
 
     print("Using ", device)
@@ -159,7 +160,7 @@ def main():
 
     start_time = time.time()
     # Only measure the generation step; do not include decode()
-    tokens = model.generate(user_context, max_new_tokens=200)[0].tolist()
+    tokens = model.generate(user_context, max_new_tokens=args.tokens)[0].tolist()
     end_time = time.time()
 
     print(decode(tokens))
