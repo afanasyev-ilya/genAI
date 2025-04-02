@@ -13,37 +13,166 @@ dropout = 0.2
 # ------------
 
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+# hyperparameters (assumed to be defined elsewhere in your code)
+n_embd = 384      # embedding dimension (input channels)
+block_size = 256  # maximum sequence length (for masking)
+dropout = 0.2     # dropout rate
+
+
 class Head(nn.Module):
-    def __init__(self, head_size):
+    def __init__(self, head_size, head_idx, block_idx, use_cache=True):
+        """
+        Args:
+            head_size: dimension for the keys, queries, and values.
+            use_cache: if True, use the KV cache variant.
+        """
         super().__init__()
         self.key = nn.Linear(n_embd, head_size, bias=False)
         self.query = nn.Linear(n_embd, head_size, bias=False)
         self.value = nn.Linear(n_embd, head_size, bias=False)
+        # Lower triangular matrix for causal masking (size: block_size x block_size)
         self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
         self.dropout = nn.Dropout(dropout)
+        # Flag to turn on/off caching. By default, caching is off.
+        self.use_cache = use_cache
+        # Internal storage for cached keys and values.
+        self.cache_k = None  # shape: (B, T_cached, head_size)
+        self.cache_v = None  # shape: (B, T_cached, head_size)
+        self.head_size = head_size
+        self.head_idx = head_idx
+        self.block_idx = block_idx
 
-    def forward(self, x):
-        # input of size (batch, time-step, channels)
-        # output of size (batch, time-step, head size)
-        B, T, C = x.shape
-        k = self.key(x)  # (B,T,hs)
-        q = self.query(x)  # (B,T,hs)
-        # compute attention scores ("affinities")
-        wei = q @ k.transpose(-2, -1) * C ** -0.5  # (B, T, hs) @ (B, hs, T) -> (B, T, T)
-        wei = wei.masked_fill(self.tril[0:T, 0:T] == 0, float('-inf'))  # (B, T, T)
+    def forward_no_cache(self, x):
+        """
+        Standard attention computation without KV cache.
+        
+        Complexity: O(B * T^2)
+          - x: (B, T, n_embd)
+          - k, q, v: each (B, T, head_size)
+          - Attention scores computed over all T tokens.
+        """
+        B, T, C = x.shape  # C should equal n_embd
+        k = self.key(x)     # (B, T, head_size)
+        q = self.query(x)   # (B, T, head_size)
+        v = self.value(x)  # (B, T, head_size)
+
+        #if self.unique_print():
+            #print(k.shape)
+            #print(k)
+
+        # Compute scaled dot-product attention scores
+        wei = q @ k.transpose(-2, -1) * C ** -0.5  # (B, T, T)
+        # Apply causal mask: each token can only attend to previous tokens (including itself)
+        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
         wei = F.softmax(wei, dim=-1)  # (B, T, T)
         wei = self.dropout(wei)
-        # perform the weighted aggregation of the values
-        v = self.value(x)  # (B,T,hs)
-        out = wei @ v  # (B, T, T) @ (B, T, hs) -> (B, T, hs)
+
+        out = wei @ v      # (B, T, head_size)
         return out
+
+    def forward_with_cache(self, x):
+        """
+        Attention computation using internal KV cache.
+        
+        In cached mode, we assume that x is a (B, T, n_embd) tensor, but during
+        generation T should be 1 (i.e. only the new token is provided).
+        
+        Complexity per step: O(B * T_cached)
+          - T_cached is the length of the cached sequence (grows over time).
+          - The new token's query attends to all previous cached keys.
+        """
+        B, T, C = x.shape
+        # We expect T to be 1 for cached generation; if not, we extract the last token.
+        if T > 1:
+            x_new = x[:, -1:, :]  # (B, 1, n_embd)
+        else:
+            x_new = x  # (B, 1, n_embd)
+
+        # Compute projections for the new token.
+        k_new = self.key(x_new)   # (B, 1, head_size)
+        q = self.query(x_new)       # (B, 1, head_size)
+        v_new = self.value(x_new)   # (B, 1, head_size)
+
+        # Append the new keys/values to the internal cache.
+        if self.cache_k is None:
+            self.cache_k = k_new    # (B, 1, head_size)
+            self.cache_v = v_new    # (B, 1, head_size)
+        else:
+            self.cache_k = torch.cat([self.cache_k, k_new], dim=1)  # (B, T_cached+1, head_size)
+            self.cache_v = torch.cat([self.cache_v, v_new], dim=1)  # (B, T_cached+1, head_size)
+
+        # Use the cached keys and values for computing attention.
+        # q: (B, 1, head_size); k: (B, T_total, head_size); v: (B, T_total, head_size)
+        k = self.cache_k
+        v = self.cache_v
+    
+        '''
+        T_total = k.size(1)
+        scaling = C ** -0.5  # same scaling factor
+        wei = q @ k.transpose(-2, -1) * scaling  # (B, 1, T_total)
+        # Create a causal mask for the new token: it can only attend to tokens up to its position.
+        mask = self.tril[:1, :T_total]  # (1, T_total) since q has T=1
+        wei = wei.masked_fill(mask == 0, float('-inf'))
+        wei = F.softmax(wei, dim=-1)  # (B, 1, T_total)
+        wei = self.dropout(wei)
+        out = wei @ v  # (B, 1, head_size)
+        '''
+
+        # old-style attention
+        # Compute scaled dot-product attention scores
+        wei = q @ k.transpose(-2, -1) * C ** -0.5  # (B, T, T)
+        # Apply causal mask: each token can only attend to previous tokens (including itself)
+        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
+        wei = F.softmax(wei, dim=-1)  # (B, T, T)
+        wei = self.dropout(wei)
+        out = wei @ v
+
+        #if self.unique_print():
+        #    print(out)
+        return out
+
+    def forward(self, x):
+        """
+        Unified forward method that selects the correct implementation.
+        
+        Args:
+            x: Input tensor of shape (B, T, n_embd). For cached generation, T is expected
+               to be 1 (or only the last token is used).
+            use_cache (bool, optional): If provided, overrides self.use_cache.
+        
+        Returns:
+            out: The attention output.
+        """
+        if self.use_cache:
+            #if self.unique_print():
+            #    print("using cache")
+            return self.forward_with_cache(x)
+        else:
+            #if self.unique_print():
+            #    print("NOT using cache")
+            return self.forward_no_cache(x)
+
+    def unique_print(self):
+        return self.head_idx == 0 and self.block_idx == 0
+
+    def reset_cache(self):
+        """
+        Resets the internal KV cache.
+        """
+        self.cache_k = None
+        self.cache_v = None
+
 
 
 class MultiHeadAttention(nn.Module):
     """ multiple heads of self-attention in parallel """
-    def __init__(self, num_heads, head_size):
+    def __init__(self, num_heads, head_size, block_idx, use_cache):
         super().__init__()
-        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+        self.heads = nn.ModuleList([Head(head_size, head_idx, block_idx, use_cache) for head_idx in range(num_heads)])
         self.proj = nn.Linear(head_size * num_heads, n_embd)
         self.dropout = nn.Dropout(dropout)
 
@@ -69,11 +198,11 @@ class FeedFoward(nn.Module):
 
 
 class Block(nn.Module):
-    def __init__(self, n_embd, n_head):
+    def __init__(self, n_embd, block_idx, use_cache, n_head):
         # n_embd: embedding dimension, n_head: the number of heads we'd like
         super().__init__()
         head_size = n_embd // n_head
-        self.sa = MultiHeadAttention(n_head, head_size)
+        self.sa = MultiHeadAttention(n_head, head_size, block_idx, use_cache)
         self.ffwd = FeedFoward(n_embd)
         self.ln1 = nn.LayerNorm(n_embd)
         self.ln2 = nn.LayerNorm(n_embd)
@@ -86,13 +215,13 @@ class Block(nn.Module):
 
 # our tiny GPT model
 class TinyGPTModel(nn.Module):
-    def __init__(self, vocab_size):
+    def __init__(self, vocab_size, use_cache=False):
         super().__init__()
         # each token directly reads off the logits for the next token from a lookup table
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
         self.blocks = nn.Sequential(
-            *[Block(n_embd, n_head=n_heads) for _ in range(n_blocks)]
+            *[Block(n_embd, block_idx, use_cache, n_head=n_heads) for block_idx in range(n_blocks)]
         )
         self.ln_fin = nn.LayerNorm(n_embd)
         self.lm_head = nn.Linear(n_embd, vocab_size)

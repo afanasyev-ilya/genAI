@@ -98,6 +98,7 @@ def main():
     parser.add_argument('--load', type=str, help="Path to a saved model to load. If omitted, a new TinyGPT model will be created.")
     parser.add_argument('--train', action='store_true', help="Train the model.")
     parser.add_argument('--iters', type=int, default=default_max_iters, help="Number of training iterations (default: 5000).")
+    parser.add_argument('--kv', action='store_true', help="Use kv-cache.")
     args = parser.parse_args()
 
     print("Using ", device)
@@ -111,7 +112,10 @@ def main():
 
     train_data, val_data, vocab_size, decode, encode = load_shakespeare_dataset('input.txt')
 
-    model = TinyGPTModel(vocab_size)
+    use_cache = args.kv
+    if args.train:
+        use_cache = False # not sure if it is save to train with KV-cache turned on
+    model = TinyGPTModel(vocab_size, args.kv)
 
     # Load or create a new model based on --load argument
     if args.load:
@@ -149,12 +153,13 @@ def main():
     user_context = torch.unsqueeze(user_context, 0)
 
     empty_context = torch.zeros((1, 1), dtype=torch.long, device=device)
+    user_context = empty_context
 
     print("user prompt size: ", user_context.size())
 
     start_time = time.time()
     # Only measure the generation step; do not include decode()
-    tokens = model.generate(user_context, max_new_tokens=500)[0].tolist()
+    tokens = model.generate(user_context, max_new_tokens=200)[0].tolist()
     end_time = time.time()
 
     print(decode(tokens))
