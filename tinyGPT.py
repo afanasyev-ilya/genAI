@@ -90,7 +90,7 @@ class Head(nn.Module):
         # Use the cached keys and values
         k = self.cache_k
         v = self.cache_v
-        
+
         '''
         if self.unique_print():
             k_check = self.key(x)   # (B, T, head_size)
@@ -105,11 +105,11 @@ class Head(nn.Module):
         wei = q @ k.transpose(-2, -1) * C ** -0.5  # (B, T_q, T_k)
 
         T_total = k.size(1)
-        wei = wei.masked_fill(self.tril[:T, :T_total] == 0, float('-inf'))
+        wei = wei.masked_fill(self.tril[:T, :T_total] == 0, float('-inf')) # as is, complexity not changed
 
-        wei = F.softmax(wei, dim=-1)
-        wei = self.dropout(wei)
-        out = wei @ v # no complexity reduction, V is T-based
+        wei = F.softmax(wei, dim=-1) # as is, complexity not changed
+        wei = self.dropout(wei) # as is, complexity not changed
+        out = wei @ v # as is, complexity not changed, since v is coming from cache
 
         return out
 
