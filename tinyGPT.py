@@ -37,12 +37,15 @@ class Head(nn.Module):
         # Lower triangular matrix for causal masking (size: block_size x block_size)
         self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
         self.dropout = nn.Dropout(dropout)
+
         # Flag to turn on/off caching. By default, caching is off.
         self.use_cache = use_cache
         # Internal storage for cached keys and values.
         self.cache_k = None  # shape: (B, T_cached, head_size)
         self.cache_v = None  # shape: (B, T_cached, head_size)
         self.head_size = head_size
+
+        # use for prints only, to allow debug info only from a single head
         self.head_idx = head_idx
         self.block_idx = block_idx
 
@@ -91,6 +94,7 @@ class Head(nn.Module):
         k = self.cache_k
         v = self.cache_v
 
+        # TODO remove this once positional embeddings issue is solve
         '''
         if self.unique_print():
             k_check = self.key(x)   # (B, T, head_size)
@@ -114,24 +118,9 @@ class Head(nn.Module):
         return out
 
     def forward(self, x):
-        """
-        Unified forward method that selects the correct implementation.
-        
-        Args:
-            x: Input tensor of shape (B, T, n_embd). For cached generation, T is expected
-               to be 1 (or only the last token is used).
-            use_cache (bool, optional): If provided, overrides self.use_cache.
-        
-        Returns:
-            out: The attention output.
-        """
         if self.use_cache:
-            #if self.unique_print():
-            #    print("using cache")
             return self.forward_with_cache(x)
         else:
-            #if self.unique_print():
-            #    print("NOT using cache")
             return self.forward_no_cache(x)
 
     def unique_print(self):
@@ -159,6 +148,10 @@ class MultiHeadAttention(nn.Module):
         out = self.proj(out)
         out = self.dropout(out)
         return out
+    
+    def reset_cache(self):
+        for head in self.heads:
+            head.reset_cache()
 
 
 class FeedFoward(nn.Module):
@@ -189,6 +182,9 @@ class Block(nn.Module):
         x = x + self.sa(self.ln1(x))
         x = x + self.ffwd(self.ln2(x))
         return x
+
+    def reset_cache(self):
+        self.sa.reset_cache()
 
 
 # our tiny GPT model
@@ -227,6 +223,10 @@ class TinyGPTModel(nn.Module):
 
         return logits, loss
 
+    def reset_cache(self):
+        for block in self.blocks:
+            block.reset_cache()
+
     def generate(self, idx, max_new_tokens):
         # idx is (B, T) array of indices in the current context
         for _ in range(max_new_tokens):
@@ -243,5 +243,7 @@ class TinyGPTModel(nn.Module):
             idx_next = torch.multinomial(probs, num_samples=1) # (B, 1)
             # append sampled index to the running sequence
             idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
+        
+        self.reset_cache()
         return idx
 
