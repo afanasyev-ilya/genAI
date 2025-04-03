@@ -82,6 +82,7 @@ class Head(nn.Module):
         B, T, C = x.shape
 
         if self.cache_k is None:
+            cache_was_empty = True
             # Initial step: process all tokens and fill the cache
             k = self.key(x)   # (B, T, HS)
             v = self.value(x) # (B, T, HS)
@@ -90,6 +91,7 @@ class Head(nn.Module):
             self.cache_k = k
             self.cache_v = v
         else:
+            cache_was_empty = False
             # Subsequent steps: process only the new token (T should be 1)
             x_new = x[:, -1:, :]  # (B, 1, C)
 
@@ -102,31 +104,30 @@ class Head(nn.Module):
             self.cache_k = torch.cat([self.cache_k, k_new], dim=1)
             self.cache_v = torch.cat([self.cache_v, v_new], dim=1)
 
+            # TODO this is incorrect if we generate more than prompt size tokens, 
+            # since we lose positional embeddings
             if self.cache_k.size(1) > 256:
-                self.cache_k = self.cache_k[:, 1:, :]  # Remove the token at T=0
+                self.cache_k = self.cache_k[:, 1:, :] # Remove the token at T=0
                 self.cache_v = self.cache_v[:, 1:, :]
-
-        # Use the cached keys and values
-        k = self.cache_k # (B, T, HS)
-        v = self.cache_v # (B, T, HS)
 
         # Compute attention scores
         # shapes: Bx1xHS * BxHSxT -> Bx1xT
         # complexity: 1*HS*T
-        wei = q @ k.transpose(-2, -1) * C ** -0.5  # (B, T_q, T_k)
+        wei = q @ self.cache_k.transpose(-2, -1) * C ** -0.5  # (B, T_q, T_k)
 
-        T_total = k.size(1)
-        wei = wei.masked_fill(self.tril[:T, :T_total] == 0, float('-inf')) # as is, complexity not changed
+        if cache_was_empty:
+            T_total = self.cache_k.size(1)
+            wei = wei.masked_fill(self.tril[:T, :T_total] == 0, float('-inf'))
 
-        wei = F.softmax(wei, dim=-1) # as is, complexity not changed
-        wei = self.dropout(wei) # as is, complexity not changed
+        wei = F.softmax(wei, dim=-1)
+        wei = self.dropout(wei)
 
         # shapes: Bx1xT * BxTxHS -> Bx1xHS
         # complexity: 1*T*HS
-        out = wei @ v # as is, complexity not changed, since v is coming from cache
+        out = wei @ self.cache_v
 
         # overall complexity with cache: 3*1*C*HS + 2*1*HS*T = O(C*HS) + O(HS*T)
-        # overall complexity: 3*T*C*HS + 2*T*HS*T = O(T*C*HS) + O(T*HS*T) = T*O(cache)
+        # overall complexity NO cache  : 3*T*C*HS + 2*T*HS*T = O(T*C*HS) + O(T*HS*T) = T * O(cache)
         return out
 
     def forward(self, x):
