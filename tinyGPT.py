@@ -51,19 +51,31 @@ class Head(nn.Module):
 
     def forward_no_cache(self, x):
         B, T, C = x.shape  # C should equal n_embd
-        k = self.key(x)     # (B, T, head_size)
-        q = self.query(x)   # (B, T, head_size)
+        # B = 1, so we can work with square matricies
+
+        # shapes: BxTxC * BxCxHS -> BxTxHS
+        # complexity: T*C*HS
+        k = self.key(x)    # (B, T, head_size)
+        # ditto
+        q = self.query(x)  # (B, T, head_size)
+        # ditto
         v = self.value(x)  # (B, T, head_size)
 
         # Compute scaled dot-product attention scores
+        # shapes: TxHS * HSxT -> TxT
+        # complexity: T * HS * T
         wei = q @ k.transpose(-2, -1) * C ** -0.5  # (B, T, T)
         
         # Apply causal mask: each token can only attend to previous tokens (including itself)
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
-        wei = F.softmax(wei, dim=-1)  # (B, T, T)
+        wei = F.softmax(wei, dim=-1) # (B, T, T)
         wei = self.dropout(wei)
 
-        out = wei @ v      # (B, T, head_size)
+        # shapes: T x T * T x HS -> T x HS
+        # complexity: T * HS * T
+        out = wei @ v # (B, T, HS)
+
+        # overall complexity: 3*T*C*HS + 2*T*HS*T
         return out
 
     def forward_with_cache(self, x):
@@ -71,18 +83,22 @@ class Head(nn.Module):
 
         if self.cache_k is None:
             # Initial step: process all tokens and fill the cache
-            k = self.key(x)   # (B, T, head_size)
-            v = self.value(x) # (B, T, head_size)
-            q = self.query(x) # (B, T, head_size)
+            k = self.key(x)   # (B, T, HS)
+            v = self.value(x) # (B, T, HS)
+            q = self.query(x) # (B, T, HS)
 
             self.cache_k = k
             self.cache_v = v
         else:
             # Subsequent steps: process only the new token (T should be 1)
             x_new = x[:, -1:, :]  # (B, 1, C)
-            k_new = self.key(x_new)  # Factor T optimization
-            v_new = self.value(x_new) # Factor T optimization
-            q = self.query(x_new) # Factor T optimization
+
+            # shapes: Bx1xC * BxCxHS -> Bx1xHS
+            # complexity: 1*C*HS
+            k_new = self.key(x_new)   # (B, 1, HS)
+            v_new = self.value(x_new) # (B, 1, HS)
+            q = self.query(x_new)     # (B, 1, HS)
+
             self.cache_k = torch.cat([self.cache_k, k_new], dim=1)
             self.cache_v = torch.cat([self.cache_v, v_new], dim=1)
 
@@ -91,21 +107,12 @@ class Head(nn.Module):
                 self.cache_v = self.cache_v[:, 1:, :]
 
         # Use the cached keys and values
-        k = self.cache_k
-        v = self.cache_v
-
-        # TODO remove this once positional embeddings issue is solve
-        '''
-        if self.unique_print():
-            k_check = self.key(x)   # (B, T, head_size)
-            v_check = self.value(x)   # (B, T, head_size)
-            # if self.cache_k.size(1) > 256 vectors are not the same, why?
-            print("X ", x.shape)
-            print("k: ", torch.allclose(k, k_check, atol=0.001), " ", T)
-            print("v: ", torch.allclose(v, v_check, atol=0.001), " ", T)
-        '''
+        k = self.cache_k # (B, T, HS)
+        v = self.cache_v # (B, T, HS)
 
         # Compute attention scores
+        # shapes: Bx1xHS * BxHSxT -> Bx1xT
+        # complexity: 1*HS*T
         wei = q @ k.transpose(-2, -1) * C ** -0.5  # (B, T_q, T_k)
 
         T_total = k.size(1)
@@ -113,8 +120,13 @@ class Head(nn.Module):
 
         wei = F.softmax(wei, dim=-1) # as is, complexity not changed
         wei = self.dropout(wei) # as is, complexity not changed
+
+        # shapes: Bx1xT * BxTxHS -> Bx1xHS
+        # complexity: 1*T*HS
         out = wei @ v # as is, complexity not changed, since v is coming from cache
 
+        # overall complexity with cache: 3*1*C*HS + 2*1*HS*T = O(C*HS) + O(HS*T)
+        # overall complexity: 3*T*C*HS + 2*T*HS*T = O(T*C*HS) + O(T*HS*T) = T*O(cache)
         return out
 
     def forward(self, x):
