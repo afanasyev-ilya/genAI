@@ -47,25 +47,14 @@ class Head(nn.Module):
         self.block_idx = block_idx
 
     def forward_no_cache(self, x):
-        """
-        Standard attention computation without KV cache.
-        
-        Complexity: O(B * T^2)
-          - x: (B, T, n_embd)
-          - k, q, v: each (B, T, head_size)
-          - Attention scores computed over all T tokens.
-        """
         B, T, C = x.shape  # C should equal n_embd
         k = self.key(x)     # (B, T, head_size)
         q = self.query(x)   # (B, T, head_size)
         v = self.value(x)  # (B, T, head_size)
 
-        #if self.unique_print():
-            #print(k.shape)
-            #print(k)
-
         # Compute scaled dot-product attention scores
         wei = q @ k.transpose(-2, -1) * C ** -0.5  # (B, T, T)
+        
         # Apply causal mask: each token can only attend to previous tokens (including itself)
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
         wei = F.softmax(wei, dim=-1)  # (B, T, T)
@@ -75,70 +64,53 @@ class Head(nn.Module):
         return out
 
     def forward_with_cache(self, x):
-        """
-        Attention computation using internal KV cache.
-        
-        In cached mode, we assume that x is a (B, T, n_embd) tensor, but during
-        generation T should be 1 (i.e. only the new token is provided).
-        
-        Complexity per step: O(B * T_cached)
-          - T_cached is the length of the cached sequence (grows over time).
-          - The new token's query attends to all previous cached keys.
-        """
         B, T, C = x.shape
-        # We expect T to be 1 for cached generation; if not, we extract the last token.
-        if T > 1:
-            x_new = x[:, -1:, :]  # (B, 1, n_embd)
-        else:
-            x_new = x  # (B, 1, n_embd)
 
-        # Compute projections for the new token.
-        k_new = self.key(x_new)   # (B, 1, head_size)
-        q = self.query(x_new)       # (B, 1, head_size)
-        v_new = self.value(x_new)   # (B, 1, head_size)
-
-        # Append the new keys/values to the internal cache.
         if self.cache_k is None:
-            self.cache_k = k_new    # (B, 1, head_size)
-            self.cache_v = v_new    # (B, 1, head_size)
-        else:
-            self.cache_k = torch.cat([self.cache_k, k_new], dim=1)  # (B, T_cached+1, head_size)
-            self.cache_v = torch.cat([self.cache_v, v_new], dim=1)  # (B, T_cached+1, head_size)
+            # Initial step: process all tokens and fill the cache
+            k = self.key(x)   # (B, T, head_size)
+            v = self.value(x) # (B, T, head_size)
+            q = self.query(x) # (B, T, head_size)
 
-            # TODO check this?
-            # If the cache length is greater than or equal to block_size, remove the first token.
-            if self.cache_k.shape[1] > block_size:
+            self.cache_k = k
+            self.cache_v = v
+        else:
+            # Subsequent steps: process only the new token (T should be 1)
+            x_new = x[:, -1:, :]  # (B, 1, C)
+            k_new = self.key(x_new)  # Factor T optimization
+            v_new = self.value(x_new) # Factor T optimization
+            q = self.query(x_new) # Factor T optimization
+            self.cache_k = torch.cat([self.cache_k, k_new], dim=1)
+            self.cache_v = torch.cat([self.cache_v, v_new], dim=1)
+
+            if self.cache_k.size(1) > 256:
                 self.cache_k = self.cache_k[:, 1:, :]  # Remove the token at T=0
                 self.cache_v = self.cache_v[:, 1:, :]
 
-        # Use the cached keys and values for computing attention.
-        # q: (B, 1, head_size); k: (B, T_total, head_size); v: (B, T_total, head_size)
+        # Use the cached keys and values
         k = self.cache_k
         v = self.cache_v
-    
+        
         '''
+        if self.unique_print():
+            k_check = self.key(x)   # (B, T, head_size)
+            v_check = self.value(x)   # (B, T, head_size)
+            # if self.cache_k.size(1) > 256 vectors are not the same, why?
+            print("X ", x.shape)
+            print("k: ", torch.allclose(k, k_check, atol=0.001), " ", T)
+            print("v: ", torch.allclose(v, v_check, atol=0.001), " ", T)
+        '''
+
+        # Compute attention scores
+        wei = q @ k.transpose(-2, -1) * C ** -0.5  # (B, T_q, T_k)
+
         T_total = k.size(1)
-        scaling = C ** -0.5  # same scaling factor
-        wei = q @ k.transpose(-2, -1) * scaling  # (B, 1, T_total)
-        # Create a causal mask for the new token: it can only attend to tokens up to its position.
-        mask = self.tril[:1, :T_total]  # (1, T_total) since q has T=1
-        wei = wei.masked_fill(mask == 0, float('-inf'))
-        wei = F.softmax(wei, dim=-1)  # (B, 1, T_total)
-        wei = self.dropout(wei)
-        out = wei @ v  # (B, 1, head_size)
-        '''
+        wei = wei.masked_fill(self.tril[:T, :T_total] == 0, float('-inf'))
 
-        # old-style attention
-        # Compute scaled dot-product attention scores
-        wei = q @ k.transpose(-2, -1) * C ** -0.5  # (B, T, T)
-        # Apply causal mask: each token can only attend to previous tokens (including itself)
-        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
-        wei = F.softmax(wei, dim=-1)  # (B, T, T)
+        wei = F.softmax(wei, dim=-1)
         wei = self.dropout(wei)
-        out = wei @ v
+        out = wei @ v # no complexity reduction, V is T-based
 
-        #if self.unique_print():
-        #    print(out)
         return out
 
     def forward(self, x):
