@@ -156,7 +156,15 @@ def main():
     empty_context = torch.zeros((1, 1), dtype=torch.long, device=device)
     user_context = empty_context
 
-    print("user prompt size: ", user_context.size())
+    start_time = time.time()
+    # Only measure the generation step; do not include decode()
+    tokens = model.generate(user_context, max_new_tokens=args.tokens)[0].tolist()
+    end_time = time.time()
+
+    print(decode(tokens))
+    print(f"Generation took {end_time - start_time:.4f} seconds")
+
+    print("---------------- HEAT done ------------------ \n")
 
     start_time = time.time()
     # Only measure the generation step; do not include decode()
