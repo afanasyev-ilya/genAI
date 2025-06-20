@@ -5,6 +5,7 @@ import torch.nn as nn
 import argparse
 import os
 import time
+import nvtx
 
 
 default_max_iters = 1000
@@ -168,7 +169,8 @@ def main():
 
     start_time = time.time()
     # Only measure the generation step; do not include decode()
-    tokens = model.generate(user_context, max_new_tokens=args.tokens)[0].tolist()
+    with nvtx.annotate("sh_infer"):
+        tokens = model.generate(user_context, max_new_tokens=args.tokens)[0].tolist()
     end_time = time.time()
 
     print(decode(tokens))

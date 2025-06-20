@@ -48,6 +48,7 @@ class Head(nn.Module):
         # use for prints only, to allow debug info only from a single head
         self.head_idx = head_idx
         self.block_idx = block_idx
+        self.cache_index = 0
 
     def forward_no_cache(self, x):
         B, T, C = x.shape  # C should equal n_embd
@@ -88,8 +89,11 @@ class Head(nn.Module):
             v = self.value(x) # (B, T, HS)
             q = self.query(x) # (B, T, HS)
 
-            self.cache_k = k
-            self.cache_v = v
+            self.cache_k = torch.zeros(B, 256, self.head_size, device='cuda:0')
+            self.cache_v = torch.zeros(B, 256, self.head_size, device='cuda:0')
+
+            self.cache_k[:, :T, :] = k
+            self.cache_v[:, :T, :] = v
         else:
             cache_was_empty = False
             # Subsequent steps: process only the new token (T should be 1)
@@ -101,8 +105,11 @@ class Head(nn.Module):
             v_new = self.value(x_new) # (B, 1, HS)
             q = self.query(x_new)     # (B, 1, HS)
 
-            self.cache_k = torch.cat([self.cache_k, k_new], dim=1)
-            self.cache_v = torch.cat([self.cache_v, v_new], dim=1)
+            #self.cache_k = torch.cat([self.cache_k, k_new], dim=1)
+            #self.cache_v = torch.cat([self.cache_v, v_new], dim=1)
+            self.cache_k[:, self.cache_index, :] = k_new.squeeze(1)
+            self.cache_v[:, self.cache_index, :] = v_new.squeeze(1)
+            self.cache_index += 1
 
             # TODO this is incorrect if we generate more than prompt size tokens, 
             # since we lose positional embeddings
@@ -145,6 +152,7 @@ class Head(nn.Module):
         """
         self.cache_k = None
         self.cache_v = None
+        self.cache_index = 0
 
 
 
