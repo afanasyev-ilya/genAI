@@ -1,0 +1,33 @@
+Fine tune base llama model on dataset with instructions
+
+```
+=== Evaluating model: BASE ===
+> Prompt: Explain quantum computing in simple terms
+Explain quantum computing in simple terms!
+Explain quantum computing in simple terms!
+If the concept of quantum computing is a bit confusing to you, don't worry. Your confusion is understandable, given that you may not have heard about quantum computing until now. You don't need to worry about understanding quantum computing and how it works.
+> Prompt: What is the capital of France?
+What is the capital of France?
+The capital of France is Paris.
+The capital of France is Paris (as it was at the time of this question's answer).
+The capital of France is Paris. The capital of France is Paris.
+The capital of France is Paris. The capital of France is Paris.
+The capital of France
+> Prompt: How does a car engine work?
+How does a car engine work?
+Answer: All cars run on fossil fuels. Exxon is one of the largest suppliers of fossil fuels. There are over 100 million cars sold in the United States a year. Fuel (kero or gasoline) is compressed by a pressurized engine,
+========================================
+```
+
+
+```
+=== Evaluating model: after examples 0-1000 ===
+> Prompt: Explain quantum computing in simple terms
+Explain quantum computing in simple terms.
+As you've probably already guessed from its name, quantum computing is a relatively young form of computing that uses quantum physics and properties to perform calculations that are too complex for classical computers, such as arithmetic or logical operations. It uses quantum physics principles like entanglement to perform computations that would be otherwise
+> Prompt: What is the capital of France?
+What is the capital of France? How does this relate to the French Republic?
+> Prompt: How does a car engine work?
+How does a car engine work?
+A Car Engine works by using an electric motor and gear transmission to convert mechanical energy to electrical energy. The electric motor drives the gear transmission, which is in turn driven by the crankshaft. The crankshaft has rocker arms, which have a number of gears. When the
+```
